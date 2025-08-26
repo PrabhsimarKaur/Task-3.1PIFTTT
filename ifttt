@@ -1,31 +1,34 @@
+#include <Wire.h>                // For I2C communication
+#include <ArduinoHttpClient.h>   // For making HTTP requests
+#include <WiFiNINA.h>            // For WiFi connectivity
+#include <BH1750.h>              // For BH1750 light sensor
 
-#include <Wire.h>
-#include <ArduinoHttpClient.h>
-#include <WiFiNINA.h>
-#include <BH1750.h>
+// -------- WiFi credentials --------
+const char* WIFI_SSID  = "JASLEEN";           
+const char* WIFI_PASSWORD = "jasleengrewal";  
 
-const char* WIFI_SSID  = "JASLEEN";
-const char* WIFI_PASSWORD = "jasleengrewal";
+// -------- IFTTT setup --------
+const char* EVENT_START = "EVENT_START";   // Event name when sunlight starts
+const char* EVENT_STOP  = "EVENT_STOP";    // Event name when sunlight stops
+const char* IFTTT_KEY   = "pdFfl08E0VTCQpOEbrjTJgPr47zNxUlxwQeYoCjhIEM"; // IFTTT Webhook key
 
-const char* EVENT_START = "EVENT_START";
-const char* EVENT_STOP  = "EVENT_STOP";
-const char* IFTTT_KEY   = "pdFfl08E0VTCQpOEbrjTJgPr47zNxUlxwQeYoCjhIEM";
+// -------- Thresholds and tracking --------
+const float LIGHT_THRESHOLD = 500.0; // Lux threshold to decide sunlight presence
 
-const float LIGHT_THRESHOLD = 500.0;
+BH1750 lightMeter;              // Light sensor object
+float luxLevel = 0;             
+float sunlightMinutes = 0;      // Total minutes of sunlight detected
+bool light = false;             // Current light status
+bool previousLight = false;     // Previous light status
+unsigned long lastMillis = 0;   
+WiFiClient wifiClient;          // WiFi client object
 
-BH1750 lightMeter;
-float luxLevel = 0;
-float sunlightMinutes = 0;
-bool light = false;
-bool previousLight = false;
-unsigned long lastMillis = 0;
-
-WiFiClient wifiClient;
-
+// -------- Setup function --------
 void setup() {
   Serial.begin(9600);
   delay(1500);
 
+  // Connect to WiFi
   Serial.print("Connecting to WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
@@ -36,50 +39,61 @@ void setup() {
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
 
+  // Initialize BH1750 sensor
   Wire.begin();
   if (lightMeter.begin()) {
     Serial.println("BH1750 initialized ");
   } else {
-    Serial.println(" Error initializing BH1750");
-    while (1);
+    Serial.println("Error initializing BH1750");
+    while (1); // Stop here if sensor fails
   }
 
-  lastMillis = millis();
+  lastMillis = millis(); // Record initial time
 }
 
+
 void loop() {
+  // Read current lux value from BH1750
   luxLevel = lightMeter.readLightLevel();
   Serial.print("Lux: "); Serial.println(luxLevel);
 
+  // Check if lux level is above threshold
   light = luxLevel >= LIGHT_THRESHOLD;
 
+  // If light state changed (dark -> light or light -> dark)
   if (light != previousLight) {
     if (light) {
-      triggerIFTTT(EVENT_START, luxLevel);
+      // Sunlight just started
+      triggerIFTTT(EVENT_START, luxLevel); // Send event with current lux
       Serial.println("☀ Sunlight started - IFTTT triggered");
     } else {
-      triggerIFTTT(EVENT_STOP, sunlightMinutes);
+      // Sunlight just stopped
+      triggerIFTTT(EVENT_STOP, sunlightMinutes); // Send event with total minutes
       Serial.println(" Sunlight stopped - IFTTT triggered");
     }
-    previousLight = light;
+    previousLight = light; // Update state
   }
 
+  // Track sunlight duration if light is present
   if (light) {
     unsigned long now = millis();
-    float deltaMinutes = (now - lastMillis) / 60000.0; 
-    sunlightMinutes += deltaMinutes;
-    lastMillis = now;
+    float deltaMinutes = (now - lastMillis) / 60000.0; // Convert ms to minutes
+    sunlightMinutes += deltaMinutes;                   // Add to total sunlight minutes
+    lastMillis = now;                                  // Reset timer
     Serial.print("Sunlight minutes: "); Serial.println(sunlightMinutes);
   } else {
+    // Reset timer when no sunlight
     lastMillis = millis();
   }
 
-  delay(1000);
+  delay(1000); // Small delay before next reading
 }
 
+// -------- Function to trigger IFTTT event --------
 void triggerIFTTT(const char* eventName, float value) {
   HttpClient http(wifiClient, "maker.ifttt.com", 80);
 
+  // Create request URL
   String url = "/trigger/";
   url += eventName;
   url += "/with/key/";
@@ -87,17 +101,23 @@ void triggerIFTTT(const char* eventName, float value) {
   url += "?value1=";
   url += String(value);
 
+  // Send GET request
   http.get(url);
+
+  // Get response from server
   int status = http.responseStatusCode();
   String response = http.responseBody();
 
+  // Debugging output
   Serial.print("IFTTT Status: "); Serial.println(status);
   Serial.print("IFTTT Response: "); Serial.println(response);
 
+  // Check if successful
   if (status == 200) {
     Serial.println(" IFTTT Trigger Sent!");
   } else {
     Serial.println(" Error Sending to IFTTT");
   }
 }
+
 
